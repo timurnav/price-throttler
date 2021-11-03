@@ -3,8 +3,6 @@ package com.price.processor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.ExecutorService;
-
 public class AsyncPriceProcessor {
 
     private static final Logger logger = LoggerFactory.getLogger(AsyncPriceProcessor.class);
@@ -13,22 +11,22 @@ public class AsyncPriceProcessor {
     private final PriceProcessor priceProcessor;
     private volatile boolean stopped;
 
-    public AsyncPriceProcessor(PriceProcessor priceProcessor, ExecutorService executorService) {
+    public AsyncPriceProcessor(PriceProcessor priceProcessor) {
         this.priceProcessor = priceProcessor;
-        executorService.submit(this::process);
     }
 
-    private void process() {
+    public void startProcessing() {
         while (true) {
             try {
                 if (stopped) {
                     logger.info("Processing of {} is stopped", priceProcessor.identity());
+                    queue.clear();
                     return;
                 }
                 PriceUpdate priceUpdate = queue.take();
                 logger.trace("Sending price update {} to {}", priceUpdate, priceProcessor);
                 priceProcessor.onPrice(priceUpdate.ccyPair, priceUpdate.rate);
-                logger.trace("Price update {} to {}", priceUpdate, priceProcessor);
+                logger.trace("Price updated {} to {}", priceUpdate, priceProcessor);
             } catch (InterruptedException e) {
                 logger.info("{} processing is interrupted", priceProcessor.identity());
                 return;

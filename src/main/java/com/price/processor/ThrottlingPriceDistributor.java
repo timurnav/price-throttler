@@ -4,33 +4,46 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
-public class ThrottlingPriceDistributor implements PriceDistributor {
+import static java.util.concurrent.TimeUnit.SECONDS;
+
+public class ThrottlingPriceDistributor implements PriceDistributor, ShutdownHook {
 
     private static final Logger logger = LoggerFactory.getLogger(ThrottlingPriceDistributor.class);
 
-    private final Map<PriceProcessor, AsyncPriceProcessor> distributionSet = new ConcurrentHashMap<>();
+    private final Map<PriceProcessor, AsyncPriceProcessor> distributionMap;
+    private final int maxSubscribers;
 
     private final ExecutorService executorService;
 
-    public ThrottlingPriceDistributor() {
-        this.executorService = Executors.newFixedThreadPool(100); // todo improve me
+    public ThrottlingPriceDistributor(int maxSubscribers) {
+        this.maxSubscribers = maxSubscribers;
+        this.distributionMap = new ConcurrentHashMap<>(maxSubscribers, 1);
+        this.executorService = Executors.newFixedThreadPool(maxSubscribers);
     }
 
     @Override
     public void subscribe(PriceProcessor priceProcessor) {
         logger.info("Subscribing {}", priceProcessor.identity());
-        distributionSet.put(priceProcessor, new AsyncPriceProcessor(priceProcessor, executorService));
+        AsyncPriceProcessor processor = new AsyncPriceProcessor(priceProcessor);
+        tryPut(priceProcessor, processor);
+        executorService.submit(processor::startProcessing);
         logger.info("Subscribed {}", priceProcessor.identity());
+    }
+
+    private synchronized void tryPut(PriceProcessor priceProcessor, AsyncPriceProcessor processor) {
+        if (distributionMap.size() < maxSubscribers) {
+            distributionMap.put(priceProcessor, processor);
+        } else {
+            throw new SubscribersCapacityExceededException(maxSubscribers);
+        }
     }
 
     @Override
     public void unsubscribe(PriceProcessor priceProcessor) {
         logger.info("Unsubscribing {}", priceProcessor.identity());
-        AsyncPriceProcessor removed = distributionSet.remove(priceProcessor);
+        AsyncPriceProcessor removed = distributionMap.remove(priceProcessor);
         if (removed != null) {
             removed.stop();
         }
@@ -41,7 +54,13 @@ public class ThrottlingPriceDistributor implements PriceDistributor {
     public void onPrice(String ccyPair, double rate) {
         PriceUpdate priceUpdate = new PriceUpdate(ccyPair, rate);
         logger.trace("Price update broadcasting {}", priceUpdate);
-        distributionSet.values().forEach(processor -> processor.onPrice(priceUpdate));
-        logger.trace("Price update broadcast finished sent {}", priceUpdate);
+        distributionMap.values().forEach(processor -> processor.onPrice(priceUpdate));
+        logger.trace("Price update broadcast sent {}", priceUpdate);
+    }
+
+    @Override
+    public void onShutdown() {
+        distributionMap.values().forEach(AsyncPriceProcessor::stop);
+        executorService.shutdown();
     }
 }

@@ -11,6 +11,16 @@ public class ThrottlingBlockingQueue {
 
     private final Object lock = new Object();
 
+    public PriceUpdate poll() {
+        String poll = ccyQueue.poll();
+        if (poll == null) {
+            return null;
+        }
+        synchronized (lock) {
+            return latestUpdates.remove(poll);
+        }
+    }
+
     public PriceUpdate take() throws InterruptedException {
         String poll = ccyQueue.take();
         synchronized (lock) {
@@ -25,6 +35,13 @@ public class ThrottlingBlockingQueue {
                 ccyQueue.offer(ccyPair);
             }
             latestUpdates.put(ccyPair, priceUpdate);
+        }
+    }
+
+    public void clear() {
+        synchronized (lock) {
+            latestUpdates.clear();
+            ccyQueue.clear();
         }
     }
 }
